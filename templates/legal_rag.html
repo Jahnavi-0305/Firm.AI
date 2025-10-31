@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>RAG Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <style>
+    /* Using Apple system fonts instead of Inter */
+    * { 
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif;
+    }
+    /* Changed to pure black and white color scheme */
+    body { background: #000000; color: #ffffff; margin: 0; padding: 0; }
+    .glass { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
+    /* Removed gradient, using white text */
+    .gradient-text { color: #ffffff; }
+    /* Changed citation links to white with underline */
+    .citation-link { color: #ffffff; cursor: pointer; text-decoration: underline; font-weight: 600; }
+    .citation-link:hover { color: #cccccc; }
+    #pdfViewer { height: calc(100vh - 200px); overflow: auto; }
+    .pdf-page { margin: 10px auto; box-shadow: 0 4px 6px rgba(255,255,255,0.1); }
+    .message { animation: slideIn 0.3s ease; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 40px; }
+    /* Changed upload zone to white borders */
+    .upload-zone { border: 2px dashed #666666; border-radius: 12px; padding: 40px; text-align: center; transition: all 0.3s; cursor: pointer; }
+    .upload-zone:hover { border-color: #ffffff; background: rgba(255, 255, 255, 0.05); }
+    .upload-zone.dragover { border-color: #ffffff; background: rgba(255, 255, 255, 0.1); }
+    
+    /* Added conversational chat bubble styles */
+    .user-message {
+      background: #ffffff;
+      color: #000000;
+      border-radius: 18px 18px 4px 18px;
+      padding: 12px 16px;
+      max-width: 70%;
+      margin-left: auto;
+      margin-right: 0;
+      box-shadow: 0 2px 8px rgba(255,255,255,0.1);
+    }
+    
+    .assistant-message {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border-radius: 18px 18px 18px 4px;
+      padding: 12px 16px;
+      max-width: 70%;
+      margin-right: auto;
+      margin-left: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+    
+    .assistant-message:hover {
+      background: rgba(255, 255, 255, 0.15);
+      transform: translateX(2px);
+    }
+    
+    .assistant-message::after {
+      content: '→';
+      position: absolute;
+      right: 8px;
+      top: 8px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      font-size: 0.875rem;
+      color: #999999;
+    }
+    
+    .assistant-message:hover::after {
+      opacity: 1;
+    }
+    
+    .error-message {
+      background: rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      border-radius: 18px;
+      padding: 12px 16px;
+      max-width: 70%;
+      margin: 0 auto;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    
+    /* Added resizable divider styles */
+    .resizer {
+      width: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      cursor: col-resize;
+      position: relative;
+      transition: background 0.2s;
+    }
+    
+    .resizer:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    
+    .resizer::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px;
+      height: 40px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    
+    .resizer:hover::after {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div style="display: flex; height: 100vh;">
+    <!-- Left: PDF Viewer -->
+    <div id="leftPanel" style="width: 50%; display: flex; flex-direction: column;">
+      <!-- Updated header styling to black and white -->
+      <div class="glass" style="padding: 1rem; display: flex; align-items: center; justify-content: space-between;">
+        <h2 style="font-size: 1.25rem; font-weight: bold;" class="gradient-text">Document Viewer</h2>
+        <label style="background: #ffffff; color: #000000; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; transition: all 0.3s;">
+          <input type="file" id="pdfUpload" accept=".pdf" style="display: none;" />
+          Upload PDF
+        </label>
+      </div>
+      <div id="pdfStatus" style="padding: 0.5rem 1rem; font-size: 0.875rem; color: #999999;"></div>
+      <div id="pdfViewer" style="flex: 1; background: #0a0a0a; padding: 1rem;">
+        <!-- Empty State -->
+        <div id="emptyState" class="empty-state">
+          <div class="upload-zone" id="dropZone">
+            <svg style="width: 4rem; height: 4rem; margin: 0 auto 1rem; color: #666666;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+            </svg>
+            <p style="font-size: 1.25rem; color: #999999; margin-bottom: 0.5rem;">Drop your PDF here</p>
+            <p style="font-size: 0.875rem; color: #666666;">or click "Upload PDF" above</p>
+            <p style="font-size: 0.75rem; color: #555555; margin-top: 1rem;">Supports: Legal contracts, NDAs, policies, regulations</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Added resizable divider -->
+    <div class="resizer" id="resizer"></div>
+
+    <!-- Right: Chat Interface -->
+    <div id="rightPanel" style="width: 50%; display: flex; flex-direction: column;">
+      <!-- Updated header styling to black and white -->
+      <div class="glass" style="padding: 1rem;">
+        <h1 style="font-size: 1.5rem; font-weight: bold;" class="gradient-text">Assistant</h1>
+        <p style="font-size: 0.875rem; color: #999999; margin-top: 0.25rem;">AI-powered document analysis with hybrid search</p>
+      </div>
+
+      <div id="chatHistory" style="flex: 1; overflow: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem;">
+        <div style="text-align: center; padding: 5rem 0;">
+          <div style="font-size: 4rem; margin-bottom: 1rem;"></div>
+          <p style="color: #999999; font-size: 1.125rem;">Upload a document to start</p>
+          <p style="color: #666666; font-size: 0.875rem; margin-top: 0.5rem;">I'll help you analyze contracts, NDAs, policies, and more</p>
+        </div>
+      </div>
+
+      <!-- Updated input styling to black and white -->
+      <div class="glass" style="padding: 1rem;">
+        <textarea id="question" rows="3" placeholder="Ask about your document..." 
+          style="width: 100%; background: #0a0a0a; color: #ffffff; border: 1px solid #333333; border-radius: 0.5rem; padding: 0.75rem 1rem; resize: none; outline: none;" disabled></textarea>
+        <button id="askBtn" style="margin-top: 0.75rem; width: 100%; background: #ffffff; color: #000000; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; border: none; cursor: pointer; transition: all 0.3s;" disabled>
+          Upload a document first
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const chatHistory = document.getElementById('chatHistory');
+    const questionInput = document.getElementById('question');
+    const askBtn = document.getElementById('askBtn');
+    const pdfUpload = document.getElementById('pdfUpload');
+    const pdfViewer = document.getElementById('pdfViewer');
+    const pdfStatus = document.getElementById('pdfStatus');
+    const emptyState = document.getElementById('emptyState');
+    const dropZone = document.getElementById('dropZone');
+    
+    let currentPdfDoc = null;
+    let currentFilename = null;
+    let conversationHistory = [];
+
+    const resizer = document.getElementById('resizer');
+    const leftPanel = document.getElementById('leftPanel');
+    const rightPanel = document.getElementById('rightPanel');
+    
+    let isResizing = false;
+    
+    resizer.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      
+      const containerWidth = window.innerWidth;
+      const leftWidth = (e.clientX / containerWidth) * 100;
+      
+      // Limit between 20% and 80%
+      if (leftWidth > 20 && leftWidth < 80) {
+        leftPanel.style.width = `${leftWidth}%`;
+        rightPanel.style.width = `${100 - leftWidth}%`;
+      }
+    });
+    
+    document.addEventListener('mouseup', () => {
+      isResizing = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    });
+
+    // PDF.js setup
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // Drag and drop support
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type === 'application/pdf') {
+        handleFileUpload(file);
+      }
+    });
+
+    dropZone.addEventListener('click', () => {
+      pdfUpload.click();
+    });
+
+    // File input change
+    pdfUpload.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) handleFileUpload(file);
+    });
+
+    // Handle file upload
+    async function handleFileUpload(file) {
+      emptyState.innerHTML = '<p style="color: #999999; text-align: center;">⏳ Processing PDF...</p>';
+      pdfStatus.textContent = 'Uploading and processing document...';
+      
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const resp = await fetch('/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        
+        if (data.success) {
+          currentFilename = data.document.filename;
+          pdfStatus.textContent = `Loaded: ${currentFilename} (${data.document.pages} pages, ${data.document.num_chunks} chunks)`;
+          
+          await renderPdf(`/pdf/${currentFilename}`);
+          
+          questionInput.disabled = false;
+          askBtn.disabled = false;
+          askBtn.textContent = 'Ask Question';
+          
+          conversationHistory = [];
+          chatHistory.innerHTML = `
+            <div style="text-align: center; padding: 2.5rem 0;">
+              <div style="font-size: 2.5rem; margin-bottom: 0.75rem;"></div>
+              <p style="color: #ffffff; font-size: 1.125rem; font-weight: 600;">${currentFilename} loaded!</p>
+              <p style="color: #666666; font-size: 0.875rem; margin-top: 0.5rem;">Ask me anything about this document</p>
+            </div>
+          `;
+        } else {
+          pdfStatus.textContent = `❌ Error: ${data.error}`;
+          emptyState.innerHTML = `<p style="color: #ffffff;">Failed to process PDF: ${data.error}</p>`;
+        }
+      } catch (err) {
+        pdfStatus.textContent = `❌ Upload failed: ${err.message}`;
+        emptyState.innerHTML = `<p style="color: #ffffff;">Upload error: ${err.message}</p>`;
+      }
+    }
+
+    // Render PDF
+    async function renderPdf(url) {
+      pdfViewer.innerHTML = '<p style="color: #999999; text-align: center; padding: 2.5rem 0;">Loading PDF...</p>';
+      const pdf = await pdfjsLib.getDocument(url).promise;
+      currentPdfDoc = pdf;
+      pdfViewer.innerHTML = '';
+
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.className = 'pdf-page';
+        canvas.id = `page-${pageNum}`;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        pdfViewer.appendChild(canvas);
+      }
+    }
+
+    // Highlight citation in PDF
+    function highlightCitation(pageNum) {
+      const canvas = document.getElementById(`page-${pageNum}`);
+      if (canvas) {
+        canvas.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        canvas.style.border = '4px solid #ffffff';
+        canvas.style.boxShadow = '0 0 20px rgba(255, 255, 255, 0.5)';
+        setTimeout(() => { 
+          canvas.style.border = ''; 
+          canvas.style.boxShadow = '0 4px 6px rgba(255,255,255,0.1)';
+        }, 3000);
+      }
+    }
+
+    // Ask question
+    async function askQuestion() {
+      if (!currentFilename) {
+        alert('Please upload a PDF first!');
+        return;
+      }
+
+      const question = questionInput.value.trim();
+      if (!question) return;
+
+      askBtn.disabled = true;
+      askBtn.textContent = 'Thinking...';
+
+      addMessage('user', question);
+      questionInput.value = '';
+
+      try {
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, history: conversationHistory })
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+          addMessage('error', data.error);
+        } else {
+          addMessage('assistant', data.answer, data.citations);
+          conversationHistory.push({ role: 'user', content: question });
+          conversationHistory.push({ role: 'assistant', content: data.answer });
+        }
+      } catch (err) {
+        addMessage('error', err.message);
+      } finally {
+        askBtn.disabled = false;
+        askBtn.textContent = 'Ask Question';
+      }
+    }
+
+    function addMessage(role, content, citations = []) {
+      const msgContainer = document.createElement('div');
+      msgContainer.style.cssText = 'display: flex; flex-direction: column; margin-bottom: 0.5rem;';
+      
+      const msg = document.createElement('div');
+      msg.className = 'message';
+      
+      if (role === 'user') {
+        msg.className += ' user-message';
+      } else if (role === 'error') {
+        msg.className += ' error-message';
+      } else {
+        msg.className += ' assistant-message';
+        msg.addEventListener('click', (e) => {
+          if (e.target.classList.contains('citation-link') || e.target.closest('.citation-link')) {
+            return;
+          }
+          jumpToReferencedPage(content, citations);
+        });
+      }
+      
+      let html = `<div style="white-space: pre-wrap;">${escapeHtml(content)}</div>`;
+
+      if (citations && citations.length > 0) {
+        html += '<div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.2);"><p style="font-size: 0.75rem; color: #999999; margin-bottom: 0.5rem; font-weight: 600;">📚 Sources:</p>';
+        citations.forEach(cite => {
+          if (cite.type === 'internal') {
+            html += `<div style="font-size: 0.75rem; background: rgba(255, 255, 255, 0.05); border-radius: 0.25rem; padding: 0.5rem; margin-bottom: 0.5rem;">
+              <span class="citation-link" onclick="highlightCitation(${cite.page_num})">
+                📄 ${cite.doc_name} - Page ${cite.page_num}
+              </span>
+              <p style="color: #666666; margin-top: 0.25rem; font-style: italic;">"${cite.preview}"</p>
+            </div>`;
+          } else {
+            html += `<div style="font-size: 0.75rem; background: rgba(255, 255, 255, 0.05); border-radius: 0.25rem; padding: 0.5rem; margin-bottom: 0.5rem;">
+              <a href="${cite.url}" target="_blank" class="citation-link">🌐 ${cite.title}</a>
+              <p style="color: #666666; margin-top: 0.25rem; font-style: italic;">"${cite.preview}"</p>
+            </div>`;
+          }
+        });
+        html += '</div>';
+      }
+
+      msg.innerHTML = html;
+      msgContainer.appendChild(msg);
+      chatHistory.appendChild(msgContainer);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function jumpToReferencedPage(answerText, citations) {
+      // First priority: Check if there are citations with page numbers
+      if (citations && citations.length > 0) {
+        const internalCitation = citations.find(c => c.type === 'internal' && c.page_num);
+        if (internalCitation) {
+          highlightCitation(internalCitation.page_num);
+          return;
+        }
+      }
+      
+      // Second priority: Parse the answer text for page references
+      // Matches patterns like "page 5", "Page 3", "pages 2-4", "p. 7", etc.
+      const pagePatterns = [
+        /page\s+(\d+)/i,
+        /pages\s+(\d+)/i,
+        /p\.\s*(\d+)/i,
+        /pg\.\s*(\d+)/i,
+        /\bpage\s*(\d+)\b/i
+      ];
+      
+      for (const pattern of pagePatterns) {
+        const match = answerText.match(pattern);
+        if (match && match[1]) {
+          const pageNum = parseInt(match[1]);
+          if (pageNum > 0 && currentPdfDoc && pageNum <= currentPdfDoc.numPages) {
+            highlightCitation(pageNum);
+            return;
+          }
+        }
+      }
+      
+      // If no page reference found, show a subtle message
+      console.log('[v0] No page reference found in answer');
+    }
+
+    function escapeHtml(s) {
+      return (s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    askBtn.addEventListener('click', askQuestion);
+    questionInput.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') askQuestion();
+    });
+  </script>
+</body>
+</html>
