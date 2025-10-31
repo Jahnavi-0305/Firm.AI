@@ -99,7 +99,7 @@ Its core feature is a **Hybrid Retrieval** and **LLM Reranking** pipeline, which
 
 -----
 
-### 🔌 API Endpoints
+### API Endpoints
 
   * `GET /`: Serves the main `legal_rag.html` frontend.
   * `POST /upload`: Handles PDF file uploads. It processes, chunks, and indexes the document, making it ready for querying.
